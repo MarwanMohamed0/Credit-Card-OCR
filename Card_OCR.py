@@ -13,22 +13,18 @@ font_path_d = 'font_images/OCRA.png'
 font_path_a = 'font_images/ocr_a_reference.png'
 
 
-
-# Finding contours of the initial digits/alphabets(FONT) and then storing their ROI's in a dictionary
+# ============================================================
+#  FIND ROI FOR LETTERS/DIGITS TEMPLATES
+# ============================================================
 def find_ROI(path):
     img = cv2.imread(path)
-    # cv2.imshow('original', img)
-    # cv2.waitKey(0)
-
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
     thresh = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY_INV)[1]
-    # cv2.imshow('thresholded', thresh)
-    # cv2.waitKey(0)
 
     cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
     cnts = contours.sort_contours(cnts, method='left-to-right')[0]
-
 
     sample = {}
     for (i, c) in enumerate(cnts):
@@ -40,7 +36,9 @@ def find_ROI(path):
     return sample
 
 
-# Preprocessing original image and finding its contours
+# ============================================================
+#  PREPROCESS CARD IMAGE TO FIND CHARACTER CONTOURS
+# ============================================================
 def preprocessing_find_contours(path):
 
     rectkernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
@@ -48,34 +46,21 @@ def preprocessing_find_contours(path):
 
     img = cv2.imread(path)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # cv2.imshow('Before' , img)
     gray = imutils.resize(gray, width=300)
-    # print(gray.shape)
-    # cv2.imshow('After', gray)
-    # cv2.waitKey(0)
 
     tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, rectkernel)
-    # cv2.imshow('Tophat', tophat)
-    # cv2.waitKey(0)
 
     gradX = cv2.Sobel(tophat, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
     gradX = np.absolute(gradX)
     (minVal, maxVal) = (np.min(gradX), np.max(gradX))
-    # cv2.imshow('BeforegradX',gradX)
 
     gradX = 255 * (gradX - minVal) / (maxVal - minVal)
     gradX = gradX.astype('uint8')
-    # print('GRADx', gradX)
-    # cv2.imshow('GRADx' , gradX)
-    # cv2.waitKey(0)
 
     gradX = cv2.morphologyEx(gradX, cv2.MORPH_CLOSE, rectkernel)
-    # cv2.imshow('Close' , gradX)
+
     thresh = cv2.threshold(gradX, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    # cv2.imshow('thresh' , thresh)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, sqkernel)
-    # cv2.imshow('55', thresh)
-    # cv2.waitKey(0)
 
     cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
@@ -84,13 +69,14 @@ def preprocessing_find_contours(path):
     return cnts
 
 
-
+# Load templates
 sample = find_ROI(font_path_d)
 digits = find_ROI(font_path_a)
-# cv2.imshow('sds',digits[0])
-# cv2.imshow('da',sample[10])
-# cv2.waitKey(0)
 
+
+# ============================================================
+#  LETTER TEMPLATE MAPPING
+# ============================================================
 char = {
     0 : ['A' , sample[1]],
     1 : ['B', sample[7]],
@@ -146,6 +132,7 @@ char = {
     51 : ['Z', sample[48]],
 }
 
+
 FIRST_NUMBER = {
 	"3": "American Express",
 	"4": "Visa",
@@ -154,11 +141,12 @@ FIRST_NUMBER = {
 }
 
 
-
 cnts = preprocessing_find_contours(image_path)
 
 
-
+# ============================================================
+#  EXTRACT & RECOGNIZE DIGITS (CARD NUMBER)
+# ============================================================
 def for_digits(cnts,path):
 
     img = cv2.imread(path)
@@ -170,7 +158,6 @@ def for_digits(cnts,path):
         (x, y, w, h) = cv2.boundingRect(c)
         ar = w / float(h)
         if ar > 2.5 and ar < 4.0:
-
             if (w > 40 and w < 55) and (h > 10 and h < 20):
                 locs_d.append((x, y, w, h))
 
@@ -181,7 +168,6 @@ def for_digits(cnts,path):
     for (i, (gX, gY, gW, gH)) in enumerate(locs_d):
         group_output = []
         group = gray[gY - 5:gY + gH + 5, gX - 5:gX + gW + 5]
-        # cv2.imshow('RR', group)
         group = cv2.threshold(group, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
 
         grpcnts = cv2.findContours(group, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -192,7 +178,6 @@ def for_digits(cnts,path):
             (x, y, w, h) = cv2.boundingRect(c)
             roi = group[y:y + h, x:x + w]
             roi = cv2.resize(roi, (57, 88))
-            # cv2.imshow('ROI', roi)
             scores = []
 
             for (digit, digitROI) in digits.items():
@@ -202,16 +187,14 @@ def for_digits(cnts,path):
 
             group_output.append(str(np.argmax(scores)))
 
-            # cv2.rectangle(img, (gX - 5, gY - 5),(gX + gW + 5, gY + gH + 5), (0, 0, 255), 2)
-        # cv2.putText(img, "".join(group_output), (gX, gY - 15),cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
-        # print(group_output)
-
-        # update the output digits list
-        # print(group_output)
         output.extend(group_output)
+
     return output
 
 
+# ============================================================
+#  EXTRACT & RECOGNIZE CARD HOLDER NAME (LETTERS)
+# ============================================================
 def for_alphabets(cnts,path):
 
     img = cv2.imread(path)
@@ -230,9 +213,7 @@ def for_alphabets(cnts,path):
 
     for (i, (gX, gY, gW, gH)) in enumerate(locs_a):
         group = gray[gY - 5:gY + gH + 5, gX - 5:gX + gW + 5]
-        # cv2.imwrite(' z{}.jpg'.format(i), group)
         group = cv2.threshold(group, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-        cv2.waitKey(0)
 
         grpcnts = cv2.findContours(group, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         grpcnts = imutils.grab_contours(grpcnts)
@@ -250,24 +231,79 @@ def for_alphabets(cnts,path):
                 (_, score, _, _) = cv2.minMaxLoc(result)
                 scores.append(score)
 
-            # print('Scores',len(scores))
             index_max_score = np.argmax(scores)
-            # print(index_max_score)
             card_name = card_name + char[index_max_score][0]
-        # print(card_name)
+
         output = output + " " + card_name
 
-    # print(output)
     return output
 
+# ============================================================
+#  IMPROVED: EXTRACT EXPIRATION DATE (MM / YY)
+# ============================================================
+def extract_expiration_date_fixed(image_path):
+    img = cv2.imread(image_path)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = imutils.resize(gray, width=300)
+
+    # Crop the expected region for expiration date (adjust these numbers per card type)
+    h, w = gray.shape
+    # Example: lower-right quarter of card for expiry
+    x_start = int(w * 0.55)
+    x_end = int(w * 0.95)
+    y_start = int(h * 0.55)
+    y_end = int(h * 0.70)
+    exp_region = gray[y_start:y_end, x_start:x_end]
+
+    # Threshold for clarity
+    exp_region = cv2.threshold(exp_region, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+
+    # Find contours in the expiry region
+    cnts = cv2.findContours(exp_region.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    cnts = contours.sort_contours(cnts, method='left-to-right')[0]
+
+    exp_digits = []
+    for c in cnts:
+        (x, y, w, h) = cv2.boundingRect(c)
+        roi = exp_region[y:y+h, x:x+w]
+        roi = cv2.resize(roi, (57, 88))
+        scores = []
+        for (digit, digitROI) in digits.items():
+            result = cv2.matchTemplate(roi, digitROI, cv2.TM_CCOEFF)
+            (_, score, _, _) = cv2.minMaxLoc(result)
+            scores.append(score)
+        exp_digits.append(str(np.argmax(scores)))
+
+    if len(exp_digits) >= 4:
+        month = "{}{}".format(exp_digits[0], exp_digits[1])
+        year = "{}{}".format(exp_digits[2], exp_digits[3])
+        return month, year
+    else:
+        return "Unknown", "Unknown"
+
+
+# ============================================================
+#  RUN ALL EXTRACTION MODULES
+# ============================================================
 output_d = for_digits(cnts , image_path)
 output_a = for_alphabets(cnts , image_path)
+exp_month, exp_year = extract_expiration_date_fixed(image_path)     
 
 
+
+# ============================================================
+#  FINAL OUTPUT
+# ============================================================
+print()
 print('RESULT...................')
 print()
 print("Card Number           : {}".format("".join(output_d)))
 print()
-print("Card Type:            : {}".format(FIRST_NUMBER[output_d[0]]))
+print("Card Type             : {}".format(FIRST_NUMBER[output_d[0]]))
 print()
 print('Card Holder Name      : {}'.format(output_a))
+print()
+print("Expiration Month      : {}".format(exp_month))
+print("Expiration Year       : {}".format(exp_year))
+
