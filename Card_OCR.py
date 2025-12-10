@@ -3,6 +3,9 @@ import imutils
 from imutils import contours
 import numpy as np
 import argparse
+import pytesseract
+import re
+
 
 ap = argparse.ArgumentParser()
 ap.add_argument('-i','--image',required=True,help = "Path to input image")
@@ -242,82 +245,55 @@ def for_alphabets(cnts,path):
 #  IMPROVED: EXTRACT EXPIRATION DATE (MM/YY)
 # ============================================================
 def extract_expiration_date(image_path):
-    """
-    Extracts expiration date by looking for pairs of digits 
-    in the lower-right region of the card, excluding the main card number area.
-    """
+    # Load image
     img = cv2.imread(image_path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    gray = imutils.resize(gray, width=300)
-
-    h, w = gray.shape
-    
-    # Focus on lower portion, right side (typical expiry location)
-    # Adjust these based on your card images
-    y_start = int(h * 0.60)  # Start at 60% down the card
-    y_end = int(h * 0.85)    # End at 85% down
-    x_start = int(w * 0.50)  # Start at 50% across (right half)
-    x_end = w
-    
-    exp_region = gray[y_start:y_end, x_start:x_end]
-    
-    # Apply preprocessing
-    exp_region = cv2.GaussianBlur(exp_region, (3, 3), 0)
-    exp_region = cv2.threshold(exp_region, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-    
-    # Find contours
-    cnts = cv2.findContours(exp_region.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cnts = imutils.grab_contours(cnts)
-    
-    if len(cnts) == 0:
+    if img is None:
+        print("[ERROR] Could not read image for expiration date.")
         return "Unknown", "Unknown"
-    
-    # Filter contours by size (individual digits, not groups)
-    digit_contours = []
-    for c in cnts:
-        (x, y, w, h) = cv2.boundingRect(c)
-        aspect_ratio = w / float(h)
-        
-        # Looking for individual digit-like contours
-        if 0.3 < aspect_ratio < 1.0 and h > 8 and h < 25 and w > 4 and w < 20:
-            digit_contours.append((x, y, w, h))
-    
-    # Sort left to right
-    digit_contours = sorted(digit_contours, key=lambda x: x[0])
-    
-    # Extract digits
-    exp_digits = []
-    for (x, y, w, h) in digit_contours:
-        roi = exp_region[y:y+h, x:x+w]
-        roi = cv2.resize(roi, (57, 88))
-        
-        scores = []
-        for (digit, digitROI) in digits.items():
-            result = cv2.matchTemplate(roi, digitROI, cv2.TM_CCOEFF)
-            (_, score, _, _) = cv2.minMaxLoc(result)
-            scores.append(score)
-        
-        recognized_digit = str(np.argmax(scores))
-        exp_digits.append(recognized_digit)
-    
-    # Need at least 4 digits for MM/YY
-    if len(exp_digits) >= 4:
-        # Take the first 4 consecutive digits that make sense
-        # (MM should be 01-12, YY should be reasonable)
-        for i in range(len(exp_digits) - 3):
-            month = "{}{}".format(exp_digits[i], exp_digits[i+1])
-            year = "{}{}".format(exp_digits[i+2], exp_digits[i+3])
-            
-            # Basic validation
-            if 1 <= int(month) <= 12:
-                return month, year
-        
-        # Fallback: just take first 4
-        month = "{}{}".format(exp_digits[0], exp_digits[1])
-        year = "{}{}".format(exp_digits[2], exp_digits[3])
-        return month, year
-    
+
+    # Convert to gray
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # Light denoising
+    gray = cv2.GaussianBlur(gray, (3,3), 0)
+
+    # Increase contrast (helps OCR)
+    gray = cv2.equalizeHist(gray)
+
+    # Tesseract config
+    config = "--psm 6 -c tessedit_char_whitelist=0123456789/"
+
+    # Extract ALL text
+    text = pytesseract.image_to_string(gray, config=config)
+
+    # Normalize text
+    text = text.replace(" ", "").replace("\n", "").replace("\t", "")
+
+    # Regex pattern
+    pattern = r"(0[1-9]|1[0-2])[/\-](\d{2})"
+    match = re.search(pattern, text)
+
+    if match:
+        MM = match.group(1)
+        YY = match.group(2)
+        return MM, YY
+
+    # If still no match → try OCR on bottom half only
+    h, w = gray.shape
+    bottom_half = gray[h//2:h, :]
+
+    text2 = pytesseract.image_to_string(bottom_half, config=config)
+    text2 = text2.replace(" ", "").replace("\n", "").replace("\t", "")
+
+    match2 = re.search(pattern, text2)
+
+    if match2:
+        MM = match2.group(1)
+        YY = match2.group(2)
+        return MM, YY
+
     return "Unknown", "Unknown"
+
 
 
 # ============================================================
@@ -341,5 +317,6 @@ print("Card Type             : {}".format(FIRST_NUMBER.get(output_d[0], "Unknown
 print()
 print('Card Holder Name      : {}'.format(output_a))
 print()
-print("Expiration Date       : {}/{}".format(exp_month, exp_year))
-print()
+exp_month, exp_year = extract_expiration_date(args["image"])
+
+print(f"Expiration Date       : {exp_month}/{exp_year}")
