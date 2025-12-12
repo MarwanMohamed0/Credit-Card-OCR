@@ -41,122 +41,159 @@ def find_ROI(path):
 
 
 # ============================================================
-#  PREPROCESS CARD IMAGE TO FIND CHARACTER CONTOURS
+#  PREPROCESS CARD IMAGE - IMPROVED
 # ============================================================
 def preprocessing_find_contours(gray):
+    # Resize for consistent processing
+    gray = imutils.resize(gray, width=300)
+    
+    # Apply bilateral filter to reduce noise while keeping edges
+    gray = cv2.bilateralFilter(gray, 11, 17, 17)
+    
+    # Morphological operations
     rectkernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
     sqkernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-
-    gray = imutils.resize(gray, width=300)
+    
     tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, rectkernel)
-
+    
+    # Edge detection
     gradX = cv2.Sobel(tophat, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
     gradX = np.absolute(gradX)
     (minVal, maxVal) = (np.min(gradX), np.max(gradX))
-
-    gradX = 255 * (gradX - minVal) / (maxVal - minVal)
+    
+    if maxVal - minVal > 0:
+        gradX = 255 * (gradX - minVal) / (maxVal - minVal)
     gradX = gradX.astype('uint8')
-
+    
     gradX = cv2.morphologyEx(gradX, cv2.MORPH_CLOSE, rectkernel)
     thresh = cv2.threshold(gradX, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, sqkernel)
-
+    
     cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
-    cnts = contours.sort_contours(cnts, method='left-to-right')[0]
-
-    return cnts, gray
+    
+    if len(cnts) > 0:
+        cnts = contours.sort_contours(cnts, method='left-to-right')[0]
+    
+    return cnts, gray, thresh
 
 
 # ============================================================
-#  EXTRACT & RECOGNIZE DIGITS (CARD NUMBER)
+#  EXTRACT & RECOGNIZE DIGITS - IMPROVED
 # ============================================================
 def extract_card_number(cnts, gray, digits):
     locs_d = []
+    
     for (i, c) in enumerate(cnts):
         (x, y, w, h) = cv2.boundingRect(c)
         ar = w / float(h)
-        if ar > 2.5 and ar < 4.0:
-            if (w > 40 and w < 55) and (h > 10 and h < 20):
+        
+        # More flexible aspect ratio
+        if ar > 2.0 and ar < 5.0:
+            if (w > 35 and w < 65) and (h > 8 and h < 25):
                 locs_d.append((x, y, w, h))
-
+    
+    if len(locs_d) == 0:
+        return []
+    
     locs_d = sorted(locs_d, key=lambda x: x[0])
     output = []
-
+    
     for (i, (gX, gY, gW, gH)) in enumerate(locs_d):
         group = gray[gY - 5:gY + gH + 5, gX - 5:gX + gW + 5]
         group = cv2.threshold(group, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-
-        grpcnts = cv2.findContours(group, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        grpcnts = cv2.findContours(group.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         grpcnts = imutils.grab_contours(grpcnts)
-        grpcnts = contours.sort_contours(grpcnts, method='left-to-right')[0]
-
-        for c in grpcnts:
-            (x, y, w, h) = cv2.boundingRect(c)
-            roi = group[y:y + h, x:x + w]
-            roi = cv2.resize(roi, (57, 88))
-            scores = []
-
-            for (digit, digitROI) in digits.items():
-                result = cv2.matchTemplate(roi, digitROI, cv2.TM_CCOEFF)
-                (_, score, _, _) = cv2.minMaxLoc(result)
-                scores.append(score)
-
-            output.append(str(np.argmax(scores)))
-
+        
+        if len(grpcnts) > 0:
+            grpcnts = contours.sort_contours(grpcnts, method='left-to-right')[0]
+            
+            for c in grpcnts:
+                (x, y, w, h) = cv2.boundingRect(c)
+                if w > 5 and h > 5:  # Filter out noise
+                    roi = group[y:y + h, x:x + w]
+                    roi = cv2.resize(roi, (57, 88))
+                    scores = []
+                    
+                    for (digit, digitROI) in digits.items():
+                        result = cv2.matchTemplate(roi, digitROI, cv2.TM_CCOEFF)
+                        (_, score, _, _) = cv2.minMaxLoc(result)
+                        scores.append(score)
+                    
+                    if len(scores) > 0:
+                        output.append(str(np.argmax(scores)))
+    
     return output
 
 
 # ============================================================
-#  EXTRACT & RECOGNIZE CARD HOLDER NAME (LETTERS)
+#  EXTRACT & RECOGNIZE CARD HOLDER NAME - IMPROVED
 # ============================================================
 def extract_cardholder_name(cnts, gray, char):
     locs_a = []
+    
     for (i, c) in enumerate(cnts):
         (x, y, w, h) = cv2.boundingRect(c)
-        if y > 145 and y < (gray.shape[0] - 8) and x < (gray.shape[1] * 5 / 8) and x > 10:
+        # Look in the lower portion of the card
+        if y > 140 and y < (gray.shape[0] - 8) and x < (gray.shape[1] * 5 / 8) and x > 10:
             locs_a.append((x, y, w, h))
-
+    
+    if len(locs_a) == 0:
+        return ""
+    
     locs_a = sorted(locs_a, key=lambda x: x[0])
     output = ''
-
+    
     for (i, (gX, gY, gW, gH)) in enumerate(locs_a):
         group = gray[gY - 5:gY + gH + 5, gX - 5:gX + gW + 5]
         group = cv2.threshold(group, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
-
-        grpcnts = cv2.findContours(group, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        grpcnts = cv2.findContours(group.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         grpcnts = imutils.grab_contours(grpcnts)
-        grpcnts = contours.sort_contours(grpcnts, method='left-to-right')[0]
-
-        card_name = ''
-        for c in grpcnts:
-            (x, y, w, h) = cv2.boundingRect(c)
-            roi = group[y:y + h, x:x + w]
-            roi = cv2.resize(roi, (57, 88))
-            scores = []
-
-            for i in range(len(char)):
-                result = cv2.matchTemplate(roi, char[i][1], cv2.TM_CCOEFF)
-                (_, score, _, _) = cv2.minMaxLoc(result)
-                scores.append(score)
-
-            index_max_score = np.argmax(scores)
-            card_name = card_name + char[index_max_score][0]
-
-        output = output + " " + card_name
-
+        
+        if len(grpcnts) > 0:
+            grpcnts = contours.sort_contours(grpcnts, method='left-to-right')[0]
+            
+            card_name = ''
+            for c in grpcnts:
+                (x, y, w, h) = cv2.boundingRect(c)
+                if w > 5 and h > 5:  # Filter out noise
+                    roi = group[y:y + h, x:x + w]
+                    roi = cv2.resize(roi, (57, 88))
+                    scores = []
+                    
+                    for j in range(len(char)):
+                        result = cv2.matchTemplate(roi, char[j][1], cv2.TM_CCOEFF)
+                        (_, score, _, _) = cv2.minMaxLoc(result)
+                        scores.append(score)
+                    
+                    if len(scores) > 0:
+                        index_max_score = np.argmax(scores)
+                        card_name = card_name + char[index_max_score][0]
+            
+            if card_name:
+                output = output + " " + card_name
+    
     return output.strip()
 
 
 # ============================================================
-#  PROCESS SINGLE FRAME
+#  PROCESS SINGLE FRAME - IMPROVED
 # ============================================================
-def process_frame(frame, digits, char):
+def process_frame(frame, digits, char, debug=False):
     """Process a single frame and extract card information"""
+    
+    # Convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     try:
-        cnts, processed_gray = preprocessing_find_contours(gray)
+        # Preprocess and find contours
+        cnts, processed_gray, thresh = preprocessing_find_contours(gray)
+        
+        if debug:
+            cv2.imshow('Preprocessed', imutils.resize(processed_gray, width=600))
+            cv2.imshow('Threshold', imutils.resize(thresh, width=600))
         
         # Extract card number
         card_number_list = extract_card_number(cnts, processed_gray, digits)
@@ -167,17 +204,18 @@ def process_frame(frame, digits, char):
         
         # Determine card type
         card_type = "Unknown"
-        if card_number_list:
+        if card_number_list and len(card_number_list) > 0:
             card_type = FIRST_NUMBER.get(card_number_list[0], "Unknown")
         
-        return card_number, card_type, cardholder_name
+        return card_number, card_type, cardholder_name, len(cnts)
     
     except Exception as e:
-        return "", "Unknown", ""
+        print(f"[ERROR] Processing failed: {str(e)}")
+        return "", "Unknown", "", 0
 
 
 # ============================================================
-#  MAIN WEBCAM FUNCTION
+#  MAIN WEBCAM FUNCTION - IMPROVED
 # ============================================================
 def run_webcam_ocr():
     """Run real-time credit card OCR using webcam"""
@@ -187,9 +225,20 @@ def run_webcam_ocr():
     print("="*60)
     print("Loading templates...")
     
-    # Load templates
-    sample = find_ROI(font_path_d)
-    digits = find_ROI(font_path_a)
+    # Load templates with error checking
+    try:
+        sample = find_ROI(font_path_d)
+        print(f"[SUCCESS] Loaded {len(sample)} letter templates from {font_path_d}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load letter templates: {str(e)}")
+        return
+    
+    try:
+        digits = find_ROI(font_path_a)
+        print(f"[SUCCESS] Loaded {len(digits)} digit templates from {font_path_a}")
+    except Exception as e:
+        print(f"[ERROR] Failed to load digit templates: {str(e)}")
+        return
     
     # Letter template mapping
     char = {
@@ -210,25 +259,43 @@ def run_webcam_ocr():
     
     print("Templates loaded successfully!")
     print("\nInstructions:")
-    print("- Hold your credit card in front of the webcam")
+    print("- Hold your credit card HORIZONTALLY in front of the webcam")
+    print("- Make sure the card fills most of the frame")
+    print("- Ensure GOOD LIGHTING (card numbers should be clearly visible)")
+    print("- Hold STEADY when capturing")
+    print("")
     print("- Press 'c' to CAPTURE and process the card")
+    print("- Press 'd' to toggle DEBUG mode (shows preprocessing)")
+    print("- Press 's' to SAVE current frame as 'test_card.jpg'")
     print("- Press 'q' to QUIT")
     print("="*60 + "\n")
     
-    # Initialize webcam
-    cap = cv2.VideoCapture(0)
+    # Initialize webcam (try different indices for macOS)
+    cap = None
+    for camera_index in [0, 1]:
+        cap = cv2.VideoCapture(camera_index)
+        if cap.isOpened():
+            print(f"[SUCCESS] Camera {camera_index} opened!")
+            break
     
-    if not cap.isOpened():
+    if cap is None or not cap.isOpened():
         print("[ERROR] Could not open webcam!")
+        print("\nTroubleshooting steps:")
+        print("1. Go to System Settings → Privacy & Security → Camera")
+        print("2. Enable camera access for Terminal (or your IDE)")
+        print("3. Restart Terminal completely")
+        print("4. Run the script again")
         return
     
     # Set camera properties for better quality
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)
     
     last_card_number = ""
     last_card_type = ""
     last_cardholder = ""
+    debug_mode = False
     
     while True:
         ret, frame = cap.read()
@@ -239,24 +306,35 @@ def run_webcam_ocr():
         
         # Create display frame
         display_frame = frame.copy()
+        h, w = display_frame.shape[:2]
+        
+        # Draw card placement guide (rectangle in center)
+        margin = 100
+        cv2.rectangle(display_frame, (margin, margin), (w-margin, h-margin), (0, 255, 0), 2)
         
         # Add instructions overlay
-        cv2.putText(display_frame, "Press 'C' to Capture | 'Q' to Quit", 
+        cv2.putText(display_frame, "Place card within green rectangle", 
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(display_frame, "Press: C=Capture | D=Debug | S=Save | Q=Quit", 
+                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         # Display last captured info
-        y_offset = 60
+        y_offset = 100
         if last_card_number:
-            cv2.putText(display_frame, f"Card Number: {last_card_number}", 
-                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            y_offset += 30
+            cv2.putText(display_frame, f"Number: {last_card_number}", 
+                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            y_offset += 35
         if last_card_type:
-            cv2.putText(display_frame, f"Card Type: {last_card_type}", 
-                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-            y_offset += 30
+            cv2.putText(display_frame, f"Type: {last_card_type}", 
+                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            y_offset += 35
         if last_cardholder:
-            cv2.putText(display_frame, f"Cardholder: {last_cardholder}", 
-                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(display_frame, f"Name: {last_cardholder}", 
+                        (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        if debug_mode:
+            cv2.putText(display_frame, "DEBUG MODE ON", 
+                        (w-200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         
         # Show frame
         cv2.imshow('Credit Card OCR - Webcam', display_frame)
@@ -268,11 +346,21 @@ def run_webcam_ocr():
             print("\nExiting...")
             break
         
+        elif key == ord('d'):
+            debug_mode = not debug_mode
+            print(f"Debug mode: {'ON' if debug_mode else 'OFF'}")
+        
+        elif key == ord('s'):
+            cv2.imwrite('test_card.jpg', frame)
+            print("\n[SAVED] Frame saved as 'test_card.jpg'")
+        
         elif key == ord('c'):
             print("\n[PROCESSING] Capturing and analyzing card...")
             
             # Process the current frame
-            card_number, card_type, cardholder_name = process_frame(frame, digits, char)
+            card_number, card_type, cardholder_name, num_contours = process_frame(frame, digits, char, debug_mode)
+            
+            print(f"[DEBUG] Found {num_contours} contours")
             
             # Display results
             print("\n" + "="*60)
@@ -281,7 +369,15 @@ def run_webcam_ocr():
             print(f"Card Number      : {card_number if card_number else 'Not detected'}")
             print(f"Card Type        : {card_type}")
             print(f"Cardholder Name  : {cardholder_name if cardholder_name else 'Not detected'}")
-            print("="*60 + "\n")
+            print("="*60)
+            
+            if not card_number and not cardholder_name:
+                print("\n[TIP] Try the following:")
+                print("  - Make sure card is well-lit")
+                print("  - Hold card horizontally and steady")
+                print("  - Move card closer or further from camera")
+                print("  - Press 's' to save frame, then test with: python original_script.py -i test_card.jpg")
+            print()
             
             # Store for display
             last_card_number = card_number if card_number else "Not detected"
