@@ -27,6 +27,9 @@ def find_ROI(path):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     thresh = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY_INV)[1]
 
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
+    thresh = cv2.dilate(thresh, kernel, iterations=1)
+
     cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
     cnts = contours.sort_contours(cnts, method='left-to-right')[0]
@@ -42,7 +45,7 @@ def find_ROI(path):
 
 
 def preprocessing_find_contours(gray):
-    gray = imutils.resize(gray, width=300)
+    gray = imutils.resize(gray, width=600)
     
     # Show resized image
     cv2.imshow('1. Resized Gray', gray)
@@ -56,20 +59,17 @@ def preprocessing_find_contours(gray):
     tophat = cv2.morphologyEx(gray, cv2.MORPH_TOPHAT, rectkernel)
     cv2.imshow('3. Tophat', tophat)
     
-    gradX = cv2.Sobel(tophat, ddepth=cv2.CV_32F, dx=1, dy=0, ksize=-1)
-    gradX = np.absolute(gradX)
-    (minVal, maxVal) = (np.min(gradX), np.max(gradX))
-    
-    if maxVal - minVal > 0:
-        gradX = 255 * (gradX - minVal) / (maxVal - minVal)
-    gradX = gradX.astype('uint8')
-    
-    cv2.imshow('4. Sobel', gradX)
-    
-    gradX = cv2.morphologyEx(gradX, cv2.MORPH_CLOSE, rectkernel)
-    cv2.imshow('5. Morph Close', gradX)
-    
-    thresh = cv2.threshold(gradX, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+    # Edge detection using Canny (better for printed card numbers)
+    edges = cv2.Canny(tophat, 50, 150)
+    cv2.imshow('4. Canny Edges', edges)
+
+    # Strengthen edges
+    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, rectkernel)
+    cv2.imshow('5. Morph Close', edges)
+
+    thresh = cv2.threshold(edges, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
+
+    thresh = cv2.threshold(edges, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)[1]
     cv2.imshow('6. Threshold', thresh)
     
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, sqkernel)

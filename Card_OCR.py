@@ -26,6 +26,9 @@ def find_ROI(path):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     thresh = cv2.threshold(gray, 10, 255, cv2.THRESH_BINARY_INV)[1]
 
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3,3))
+    thresh = cv2.dilate(thresh, kernel, iterations=1)
+
     cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = imutils.grab_contours(cnts)
     cnts = contours.sort_contours(cnts, method='left-to-right')[0]
@@ -45,7 +48,7 @@ def find_ROI(path):
 # ============================================================
 def preprocessing_find_contours(gray):
     # Resize for consistent processing
-    gray = imutils.resize(gray, width=300)
+    gray = imutils.resize(gray, width=600)
     
     # Apply bilateral filter to reduce noise while keeping edges
     gray = cv2.bilateralFilter(gray, 11, 17, 17)
@@ -89,8 +92,8 @@ def extract_card_number(cnts, gray, digits):
         ar = w / float(h)
         
         # More flexible aspect ratio
-        if ar > 2.0 and ar < 5.0:
-            if (w > 35 and w < 65) and (h > 8 and h < 25):
+        if 1.5 < ar < 7.0:
+              if 20 < w < 120 and 10 < h < 70:
                 locs_d.append((x, y, w, h))
     
     if len(locs_d) == 0:
